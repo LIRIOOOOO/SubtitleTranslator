@@ -8,8 +8,8 @@ import android.os.Handler;
 import android.os.Looper;
 import org.vosk.Model;
 import org.vosk.Recognizer;
-import org.vosk.android.StorageService;
 import org.json.JSONObject;
+import java.io.File;
 import java.io.IOException;
 
 public class SpeechManager {
@@ -43,26 +43,32 @@ public class SpeechManager {
 
     public void start() {
         active = true;
-        callback.onStatusChange("⏳ Cargando modelo...");
+        mainHandler.post(() -> callback.onStatusChange("⏳ Cargando modelo..."));
 
-        // Determinar qué modelo descargar según idioma
-        String modelName = getModelName(sourceLang);
+        new Thread(() -> {
+            try {
+                // Buscar modelo en Descargas
+                File modelPath = new File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS),
+                    "model");
 
-        StorageService.unpack(context, modelName, "model",
-            (model) -> {
-                this.model = model;
-                try {
-                    recognizer = new Recognizer(model, SAMPLE_RATE);
-                    startRecording();
-                    mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
-                } catch (IOException e) {
-                    mainHandler.post(() -> callback.onStatusChange("⚠️ Error al iniciar reconocedor"));
+                if (!modelPath.exists()) {
+                    mainHandler.post(() -> callback.onStatusChange(
+                        "⚠️ Carpeta 'model' no encontrada en Descargas"));
+                    return;
                 }
-            },
-            (exception) -> {
-                mainHandler.post(() -> callback.onStatusChange("⚠️ Error descargando modelo"));
+
+                model = new Model(modelPath.getAbsolutePath());
+                recognizer = new Recognizer(model, SAMPLE_RATE);
+                startRecording();
+                mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
+
+            } catch (IOException e) {
+                mainHandler.post(() -> callback.onStatusChange(
+                    "⚠️ Error: " + e.getMessage()));
             }
-        );
+        }).start();
     }
 
     private void startRecording() {
@@ -89,23 +95,19 @@ public class SpeechManager {
                 if (read > 0 && recognizer != null) {
                     try {
                         if (recognizer.acceptWaveForm(buffer, read)) {
-                            // Resultado final
                             String result = recognizer.getResult();
                             String text = extractText(result, "text");
                             if (!text.isEmpty()) {
                                 mainHandler.post(() -> callback.onResult(text));
                             }
                         } else {
-                            // Resultado parcial
                             String partial = recognizer.getPartialResult();
                             String text = extractText(partial, "partial");
                             if (!text.isEmpty()) {
                                 mainHandler.post(() -> callback.onPartialResult(text));
                             }
                         }
-                    } catch (Exception e) {
-                        // Continuar aunque haya error en frame
-                    }
+                    } catch (Exception e) { }
                 }
             }
         });
@@ -117,33 +119,6 @@ public class SpeechManager {
             return new JSONObject(json).optString(key, "").trim();
         } catch (Exception e) {
             return "";
-        }
-    }
-
-    private String getModelName(String langCode) {
-        if (langCode == null || "auto".equals(langCode) || langCode.startsWith("en")) {
-            return "vosk-model-small-en-us-0.15";
-        } else if (langCode.startsWith("fr")) {
-            return "vosk-model-small-fr-0.22";
-        } else if (langCode.startsWith("de")) {
-            return "vosk-model-small-de-0.15";
-        } else if (langCode.startsWith("es")) {
-            return "vosk-model-small-es-0.42";
-        } else if (langCode.startsWith("pt")) {
-            return "vosk-model-small-pt-0.3";
-        } else if (langCode.startsWith("it")) {
-            return "vosk-model-small-it-0.22";
-        } else if (langCode.startsWith("ru")) {
-            return "vosk-model-small-ru-0.22";
-        } else if (langCode.startsWith("zh")) {
-            return "vosk-model-small-cn-0.22";
-        } else if (langCode.startsWith("ja")) {
-            return "vosk-model-small-ja-0.22";
-        } else if (langCode.startsWith("ko")) {
-            return "vosk-model-small-ko-0.22";
-        } else {
-            // Default inglés
-            return "vosk-model-small-en-us-0.15";
         }
     }
 
