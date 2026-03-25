@@ -52,10 +52,10 @@ public class SpeechManager {
         recognizer.setRecognitionListener(new RecognitionListener() {
 
             @Override
-            public void onReadyForSpeech(Bundle params) {
-                errorCount = 0;
-                callback.onStatusChange("🎙️ Escuchando...");
-            }
+public void onReadyForSpeech(Bundle params) {
+    errorCount = 0;
+    callback.onStatusChange("🎙️ Escuchando...");
+}
 
             @Override
             public void onBeginningOfSpeech() {
