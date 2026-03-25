@@ -65,11 +65,14 @@ public class SpeechManager {
                 mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
 
 } catch (Exception e) {
-    mainHandler.post(() -> callback.onStatusChange(
-        "⚠️ Error: " + e.getClass().getSimpleName() + " - " + e.getMessage()));
+    String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
+    android.util.Log.e("SpeechManager", "Error cargando modelo", e);
+    mainHandler.post(() -> callback.onStatusChange("⚠️ " + msg));
+} catch (Error e) {
+    String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
+    android.util.Log.e("SpeechManager", "Error fatal", e);
+    mainHandler.post(() -> callback.onStatusChange("⚠️ Fatal: " + msg));
             }
-        }).start();
-    }
 
     private void startRecording() {
         int minBuffer = AudioRecord.getMinBufferSize(
