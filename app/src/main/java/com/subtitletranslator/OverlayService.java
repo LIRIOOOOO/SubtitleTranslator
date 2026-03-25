@@ -4,6 +4,8 @@ import android.app.*;
 import android.content.*;
 import android.graphics.*;
 import android.media.AudioManager;
+import android.media.AudioFocusRequest;
+import android.media.AudioAttributes;
 import android.os.*;
 import android.view.*;
 import android.widget.*;
@@ -27,6 +29,7 @@ public class OverlayService extends Service {
     private SpeechManager speechManager;
     private OfflineTranslator translator;
     private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
 
     private String sourceLang = "auto";
     private int fontSize = 18;
@@ -74,17 +77,18 @@ public class OverlayService extends Service {
         return START_STICKY;
     }
 
-    /**
-     * AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK: le dice a Android que
-     * no pause otras apps, solo baje un poco el volumen si necesita.
-     */
     private void requestAudioFocusDuck() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            AudioFocusRequest focusRequest = new android.media.AudioFocusRequest.Builder(
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            audioFocusRequest = new AudioFocusRequest.Builder(
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(attrs)
                     .setOnAudioFocusChangeListener(change -> {})
                     .build();
-            audioManager.requestAudioFocus(focusRequest);
+            audioManager.requestAudioFocus(audioFocusRequest);
         } else {
             audioManager.requestAudioFocus(
                     change -> {},
@@ -95,11 +99,9 @@ public class OverlayService extends Service {
 
     private void abandonAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            AudioFocusRequest focusRequest = new android.media.AudioFocusRequest.Builder(
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                    .setOnAudioFocusChangeListener(change -> {})
-                    .build();
-            audioManager.abandonAudioFocusRequest(focusRequest);
+            if (audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            }
         } else {
             audioManager.abandonAudioFocus(change -> {});
         }
@@ -241,4 +243,4 @@ public class OverlayService extends Service {
         removeOverlay();
         if (translator != null) translator.destroy();
     }
-    }
+}
