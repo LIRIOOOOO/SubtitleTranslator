@@ -1,10 +1,16 @@
 package com.subtitletranslator;
 
 import android.content.Context;
-import android.content.Intent;
-import android.os.*;
-import android.speech.*;
-import java.util.*;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.os.Handler;
+import android.os.Looper;
+import org.vosk.Model;
+import org.vosk.Recognizer;
+import org.vosk.android.StorageService;
+import org.json.JSONObject;
+import java.io.IOException;
 
 public class SpeechManager {
 
@@ -14,149 +20,149 @@ public class SpeechManager {
         void onStatusChange(String status);
     }
 
+    private static final int SAMPLE_RATE = 16000;
+    private static final int BUFFER_SIZE = 4096;
+
     private final Context context;
     private final String sourceLang;
     private final SpeechCallback callback;
+    private final Handler mainHandler;
 
-    private SpeechRecognizer recognizer;
-    private final Handler handler;
-    private boolean active = false;
-    private int errorCount = 0;
-    private static final int MAX_ERRORS = 5;
-    private static final int BASE_DELAY_MS = 500;
+    private Model model;
+    private Recognizer recognizer;
+    private AudioRecord audioRecord;
+    private Thread recordingThread;
+    private volatile boolean active = false;
 
     public SpeechManager(Context context, String sourceLang, SpeechCallback callback) {
         this.context = context;
         this.sourceLang = sourceLang;
         this.callback = callback;
-        this.handler = new Handler(Looper.getMainLooper());
+        this.mainHandler = new Handler(Looper.getMainLooper());
     }
 
     public void start() {
         active = true;
-        errorCount = 0;
-        listen();
+        callback.onStatusChange("⏳ Cargando modelo...");
+
+        // Determinar qué modelo descargar según idioma
+        String modelName = getModelName(sourceLang);
+
+        StorageService.unpack(context, modelName, "model",
+            (model) -> {
+                this.model = model;
+                try {
+                    recognizer = new Recognizer(model, SAMPLE_RATE);
+                    startRecording();
+                    mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
+                } catch (IOException e) {
+                    mainHandler.post(() -> callback.onStatusChange("⚠️ Error al iniciar reconocedor"));
+                }
+            },
+            (exception) -> {
+                mainHandler.post(() -> callback.onStatusChange("⚠️ Error descargando modelo"));
+            }
+        );
+    }
+
+    private void startRecording() {
+        int minBuffer = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT);
+
+        int bufferSize = Math.max(minBuffer, BUFFER_SIZE);
+
+        audioRecord = new AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize);
+
+        audioRecord.startRecording();
+
+        recordingThread = new Thread(() -> {
+            short[] buffer = new short[BUFFER_SIZE];
+            while (active) {
+                int read = audioRecord.read(buffer, 0, buffer.length);
+                if (read > 0 && recognizer != null) {
+                    try {
+                        if (recognizer.acceptWaveForm(buffer, read)) {
+                            // Resultado final
+                            String result = recognizer.getResult();
+                            String text = extractText(result, "text");
+                            if (!text.isEmpty()) {
+                                mainHandler.post(() -> callback.onResult(text));
+                            }
+                        } else {
+                            // Resultado parcial
+                            String partial = recognizer.getPartialResult();
+                            String text = extractText(partial, "partial");
+                            if (!text.isEmpty()) {
+                                mainHandler.post(() -> callback.onPartialResult(text));
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Continuar aunque haya error en frame
+                    }
+                }
+            }
+        });
+        recordingThread.start();
+    }
+
+    private String extractText(String json, String key) {
+        try {
+            return new JSONObject(json).optString(key, "").trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String getModelName(String langCode) {
+        if (langCode == null || "auto".equals(langCode) || langCode.startsWith("en")) {
+            return "vosk-model-small-en-us-0.15";
+        } else if (langCode.startsWith("fr")) {
+            return "vosk-model-small-fr-0.22";
+        } else if (langCode.startsWith("de")) {
+            return "vosk-model-small-de-0.15";
+        } else if (langCode.startsWith("es")) {
+            return "vosk-model-small-es-0.42";
+        } else if (langCode.startsWith("pt")) {
+            return "vosk-model-small-pt-0.3";
+        } else if (langCode.startsWith("it")) {
+            return "vosk-model-small-it-0.22";
+        } else if (langCode.startsWith("ru")) {
+            return "vosk-model-small-ru-0.22";
+        } else if (langCode.startsWith("zh")) {
+            return "vosk-model-small-cn-0.22";
+        } else if (langCode.startsWith("ja")) {
+            return "vosk-model-small-ja-0.22";
+        } else if (langCode.startsWith("ko")) {
+            return "vosk-model-small-ko-0.22";
+        } else {
+            // Default inglés
+            return "vosk-model-small-en-us-0.15";
+        }
     }
 
     public void stop() {
         active = false;
-        handler.removeCallbacksAndMessages(null);
-        destroyRecognizer();
-    }
-
-    private void listen() {
-        if (!active) return;
-
-        destroyRecognizer();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(context);
-        recognizer.setRecognitionListener(new RecognitionListener() {
-
-            @Override
-public void onReadyForSpeech(Bundle params) {
-    errorCount = 0;
-    callback.onStatusChange("🎙️ Escuchando...");
-}
-
-            @Override
-            public void onBeginningOfSpeech() {
-                callback.onStatusChange("💬 Procesando...");
-            }
-
-            @Override
-            public void onPartialResults(Bundle partial) {
-                ArrayList<String> list = partial.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION);
-                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
-                    callback.onPartialResult(list.get(0));
-                }
-            }
-
-            @Override
-            public void onResults(Bundle results) {
-                ArrayList<String> list = results.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION);
-                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
-                    callback.onResult(list.get(0));
-                }
-                // Reinicio inmediato tras resultado exitoso
-                scheduleRestart(300);
-            }
-
-            @Override
-            public void onError(int error) {
-                switch (error) {
-                    case SpeechRecognizer.ERROR_NO_MATCH:
-                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                        // Errores normales, reiniciar rápido
-                        scheduleRestart(300);
-                        break;
-                    case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                        // Esperar más tiempo
-                        scheduleRestart(1000);
-                        break;
-                    case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
-                        callback.onStatusChange("⚠️ Sin permiso de micrófono");
-                        active = false;
-                        break;
-                    default:
-                        errorCount++;
-                        if (errorCount >= MAX_ERRORS) {
-                            // Pausa larga y resetea contador
-                            callback.onStatusChange("🔄 Reiniciando...");
-                            errorCount = 0;
-                            scheduleRestart(3000);
-                        } else {
-                            // Espera progresiva
-                            int delay = BASE_DELAY_MS * errorCount;
-                            scheduleRestart(delay);
-                        }
-                        break;
-                }
-            }
-
-            @Override public void onRmsChanged(float rmsdB) {}
-            @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {}
-            @Override public void onEvent(int eventType, Bundle params) {}
-        });
-
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-
-        String lang = "auto".equals(sourceLang) ? "en-US" : sourceLang;
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        intent.putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
-        intent.putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
-        // Timeout extendido para reducir ERROR_SPEECH_TIMEOUT
-        intent.putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L);
-
-        try {
-            recognizer.startListening(intent);
-        } catch (Exception e) {
-            scheduleRestart(1000);
-        }
-    }
-
-    private void scheduleRestart(int delayMs) {
-        if (!active) return;
-        handler.removeCallbacksAndMessages(null);
-        handler.postDelayed(this::listen, delayMs);
-    }
-
-    private void destroyRecognizer() {
-        if (recognizer != null) {
+        if (audioRecord != null) {
             try {
-                recognizer.stopListening();
-                recognizer.destroy();
+                audioRecord.stop();
+                audioRecord.release();
             } catch (Exception e) {}
+            audioRecord = null;
+        }
+        if (recognizer != null) {
+            try { recognizer.close(); } catch (Exception e) {}
             recognizer = null;
         }
+        if (model != null) {
+            try { model.close(); } catch (Exception e) {}
+            model = null;
+        }
     }
-    }
+}
