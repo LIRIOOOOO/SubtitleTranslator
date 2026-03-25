@@ -64,9 +64,9 @@ public class SpeechManager {
                 startRecording();
                 mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
 
-            } catch (IOException e) {
-                mainHandler.post(() -> callback.onStatusChange(
-                    "⚠️ Error: " + e.getMessage()));
+} catch (Exception e) {
+    mainHandler.post(() -> callback.onStatusChange(
+        "⚠️ Error: " + e.getClass().getSimpleName() + " - " + e.getMessage()));
             }
         }).start();
     }
