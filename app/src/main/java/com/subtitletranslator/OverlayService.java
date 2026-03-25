@@ -110,35 +110,43 @@ public class OverlayService extends Service {
     private void startSpeech() {
         speechManager = new SpeechManager(this, sourceLang,
                 new SpeechManager.SpeechCallback() {
+
                     @Override
                     public void onPartialResult(String text) {
-                        mainHandler.post(() -> {
-                            if (tvOriginal != null) {
-                                tvOriginal.setText("🔊 " + text);
-                                tvOriginal.setVisibility(View.VISIBLE);
-                            }
-                        });
+                        new Thread(() -> {
+                            String translated = translator.translate(text, sourceLang);
+                            mainHandler.post(() -> {
+                                if (tvSubtitle != null) tvSubtitle.setText(translated);
+                                if (tvOriginal != null) {
+                                    tvOriginal.setText("🔊 " + text);
+                                    tvOriginal.setVisibility(View.VISIBLE);
+                                }
+                            });
+                        }).start();
                     }
 
-@Override
-public void onPartialResult(String text) {
-    new Thread(() -> {
-        String translated = translator.translate(text, sourceLang);
-        mainHandler.post(() -> {
-            if (tvSubtitle != null) tvSubtitle.setText(translated);
-            if (tvOriginal != null) {
-                tvOriginal.setText("🔊 " + text);
-                tvOriginal.setVisibility(View.VISIBLE);
-            }
-        });
-    }).start();
-}
+                    @Override
+                    public void onResult(String text) {
+                        new Thread(() -> {
+                            String translated = translator.translate(text, sourceLang);
+                            mainHandler.post(() -> {
+                                if (tvSubtitle != null) tvSubtitle.setText(translated);
+                                if (tvOriginal != null) {
+                                    tvOriginal.setText("🔊 " + text);
+                                    tvOriginal.setVisibility(View.VISIBLE);
+                                }
+                            });
+                        }).start();
+                    }
 
                     @Override
                     public void onStatusChange(String status) {
                         mainHandler.post(() -> {
                             if (tvSubtitle != null && !isPaused) {
-                                tvSubtitle.setText(status);
+                                String current = tvSubtitle.getText().toString();
+                                if (current.isEmpty() || current.startsWith("🎙") || current.startsWith("⚠") || current.startsWith("🔄")) {
+                                    tvSubtitle.setText(status);
+                                }
                             }
                         });
                     }
