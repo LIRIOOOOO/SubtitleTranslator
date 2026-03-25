@@ -47,32 +47,40 @@ public class SpeechManager {
 
         new Thread(() -> {
             try {
-                // Buscar modelo en Descargas
                 File modelPath = new File(
                     android.os.Environment.getExternalStoragePublicDirectory(
                         android.os.Environment.DIRECTORY_DOWNLOADS),
                     "model");
 
+                // Mostrar ruta exacta en pantalla
+                mainHandler.post(() -> callback.onStatusChange(
+                    "Buscando en: " + modelPath.getAbsolutePath()));
+                try { Thread.sleep(3000); } catch (Exception ignored) {}
+
                 if (!modelPath.exists()) {
                     mainHandler.post(() -> callback.onStatusChange(
-                        "⚠️ Carpeta 'model' no encontrada en Descargas"));
+                        "⚠️ No existe: " + modelPath.getAbsolutePath()));
                     return;
                 }
+
+                mainHandler.post(() -> callback.onStatusChange("✅ Carpeta encontrada, cargando..."));
 
                 model = new Model(modelPath.getAbsolutePath());
                 recognizer = new Recognizer(model, SAMPLE_RATE);
                 startRecording();
                 mainHandler.post(() -> callback.onStatusChange("🎙️ Escuchando..."));
 
-} catch (Exception e) {
-    String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
-    android.util.Log.e("SpeechManager", "Error cargando modelo", e);
-    mainHandler.post(() -> callback.onStatusChange("⚠️ " + msg));
-} catch (Error e) {
-    String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
-    android.util.Log.e("SpeechManager", "Error fatal", e);
-    mainHandler.post(() -> callback.onStatusChange("⚠️ Fatal: " + msg));
+            } catch (Exception e) {
+                String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
+                android.util.Log.e("SpeechManager", "Error cargando modelo", e);
+                mainHandler.post(() -> callback.onStatusChange("⚠️ " + msg));
+            } catch (Error e) {
+                String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
+                android.util.Log.e("SpeechManager", "Error fatal", e);
+                mainHandler.post(() -> callback.onStatusChange("⚠️ Fatal: " + msg));
             }
+        }).start();
+    }
 
     private void startRecording() {
         int minBuffer = AudioRecord.getMinBufferSize(
@@ -110,7 +118,7 @@ public class SpeechManager {
                                 mainHandler.post(() -> callback.onPartialResult(text));
                             }
                         }
-                    } catch (Exception e) { }
+                    } catch (Exception e) {}
                 }
             }
         });
