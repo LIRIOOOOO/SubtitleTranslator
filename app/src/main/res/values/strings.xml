@@ -1,9 +1,3 @@
-  <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.NoTitleBar">
-        <item name="android:colorPrimary">#1E88E5</item>
-        <item name="android:colorPrimaryDark">#1565C0</item>
-        <item name="android:colorAccent">#43A047</item>
-        <item name="android:windowBackground">#121212</item>
-    </style>
+    <string name="app_name">SubTraductor</string>
 </resources>
