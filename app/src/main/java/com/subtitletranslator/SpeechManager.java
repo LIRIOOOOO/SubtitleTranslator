@@ -6,6 +6,7 @@ import android.os.*;
 import android.speech.*;
 import android.util.Log;
 import com.google.mlkit.nl.translate.*;
+import com.google.mlkit.common.model.DownloadConditions;
 import java.util.*;
 
 public class SpeechManager {
@@ -51,11 +52,6 @@ public class SpeechManager {
 
         translator = Translation.getClient(options);
 
-        DownloadConditions conditions = new DownloadConditions.Builder()
-                .requireWifi()
-                .build();
-
-        // Intentar sin restricción de WiFi primero
         DownloadConditions noRestriction = new DownloadConditions.Builder().build();
 
         translator.downloadModelIfNeeded(noRestriction)
@@ -65,7 +61,6 @@ public class SpeechManager {
                     listen();
                 })
                 .addOnFailureListener(e -> {
-                    // Si falla la descarga, usar traducción básica offline
                     translatorReady = false;
                     callback.onStatusChange("⚠️ Sin modelo ML Kit, usando traducción básica");
                     listen();
@@ -92,8 +87,7 @@ public class SpeechManager {
                 ArrayList<String> list = partial.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
-                    String text = list.get(0);
-                    translateAndPost(text, true);
+                    translateAndPost(list.get(0), true);
                 }
             }
 
@@ -161,12 +155,8 @@ public class SpeechManager {
                         } else {
                             callback.onResult(translated);
                         }
-                        callback.onPartialResult(text); // mostrar original
                     })
-                    .addOnFailureListener(e -> {
-                        // Fallback al diccionario offline
-                        postFallback(text, isPartial);
-                    });
+                    .addOnFailureListener(e -> postFallback(text, isPartial));
         } else {
             postFallback(text, isPartial);
         }
@@ -225,4 +215,4 @@ public class SpeechManager {
             translator = null;
         }
     }
-                }
+}
