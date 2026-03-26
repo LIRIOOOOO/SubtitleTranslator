@@ -13,6 +13,7 @@ public class MainActivity extends Activity {
 
     private static final int REQUEST_OVERLAY_PERMISSION = 1001;
     private static final int REQUEST_RECORD_AUDIO = 1002;
+    private static final int REQUEST_STORAGE = 1003;
 
     private Button btnToggle;
     private TextView tvStatus;
@@ -92,8 +93,28 @@ public class MainActivity extends Activity {
         }
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},
+                    REQUEST_RECORD_AUDIO);
             return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission("android.permission.READ_MEDIA_AUDIO")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{
+                    "android.permission.READ_MEDIA_AUDIO",
+                    "android.permission.READ_MEDIA_VIDEO",
+                    "android.permission.READ_MEDIA_IMAGES"
+                }, REQUEST_STORAGE);
+                return;
+            }
+        } else {
+            if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE
+                }, REQUEST_STORAGE);
+                return;
+            }
         }
         startOverlayService();
     }
@@ -153,5 +174,8 @@ public class MainActivity extends Activity {
                 tvStatus.setText("⚠️ Se necesita permiso de micrófono");
             }
         }
+        if (requestCode == REQUEST_STORAGE) {
+            startOverlayService();
+        }
     }
-          }
+}
