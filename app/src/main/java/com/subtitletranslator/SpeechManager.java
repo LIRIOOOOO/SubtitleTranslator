@@ -10,7 +10,6 @@ import org.vosk.Model;
 import org.vosk.Recognizer;
 import org.json.JSONObject;
 import java.io.File;
-import java.io.IOException;
 
 public class SpeechManager {
 
@@ -47,12 +46,11 @@ public class SpeechManager {
 
         new Thread(() -> {
             try {
+                // Ruta raíz del almacenamiento interno
                 File modelPath = new File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOWNLOADS),
+                    android.os.Environment.getExternalStorageDirectory(),
                     "model");
 
-                // Mostrar ruta exacta en pantalla
                 mainHandler.post(() -> callback.onStatusChange(
                     "Buscando en: " + modelPath.getAbsolutePath()));
                 try { Thread.sleep(3000); } catch (Exception ignored) {}
@@ -63,7 +61,7 @@ public class SpeechManager {
                     return;
                 }
 
-                mainHandler.post(() -> callback.onStatusChange("✅ Carpeta encontrada, cargando..."));
+                mainHandler.post(() -> callback.onStatusChange("✅ Encontrada, cargando..."));
 
                 model = new Model(modelPath.getAbsolutePath());
                 recognizer = new Recognizer(model, SAMPLE_RATE);
@@ -72,7 +70,7 @@ public class SpeechManager {
 
             } catch (Exception e) {
                 String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
-                android.util.Log.e("SpeechManager", "Error cargando modelo", e);
+                android.util.Log.e("SpeechManager", "Error", e);
                 mainHandler.post(() -> callback.onStatusChange("⚠️ " + msg));
             } catch (Error e) {
                 String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
