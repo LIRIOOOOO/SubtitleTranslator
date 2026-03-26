@@ -225,4 +225,4 @@ public class SpeechManager {
             translator = null;
         }
     }
-}
+                }
