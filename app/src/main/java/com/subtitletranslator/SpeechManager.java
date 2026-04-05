@@ -1,4 +1,3 @@
-
 package com.subtitletranslator;
 
 import android.content.Context;
@@ -29,7 +28,6 @@ public class SpeechManager {
     private int errorCount = 0;
     private static final int MAX_ERRORS = 5;
 
-    // Para evitar duplicados
     private String lastPartial = "";
     private String lastResult = "";
 
@@ -91,7 +89,6 @@ public class SpeechManager {
                         SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list != null && !list.isEmpty()) {
                     String text = list.get(0).trim();
-                    // Evitar duplicados con el último parcial
                     if (!text.isEmpty() && !text.equals(lastPartial)) {
                         lastPartial = text;
                         translateAndPost(text, true);
@@ -105,14 +102,14 @@ public class SpeechManager {
                         SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list != null && !list.isEmpty()) {
                     String text = list.get(0).trim();
-                    // Evitar duplicar el último resultado
                     if (!text.isEmpty() && !text.equals(lastResult)) {
                         lastResult = text;
                         lastPartial = "";
                         translateAndPost(text, false);
                     }
                 }
-                scheduleRestart(300);
+                // Reinicio con delay largo para no interrumpir multimedia
+                scheduleRestart(800);
             }
 
             @Override
@@ -120,18 +117,18 @@ public class SpeechManager {
                 switch (error) {
                     case SpeechRecognizer.ERROR_NO_MATCH:
                     case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                        scheduleRestart(300);
+                        scheduleRestart(500);
                         break;
                     case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                        scheduleRestart(1000);
+                        scheduleRestart(1500);
                         break;
                     default:
                         errorCount++;
                         if (errorCount >= MAX_ERRORS) {
                             errorCount = 0;
-                            scheduleRestart(3000);
+                            scheduleRestart(4000);
                         } else {
-                            scheduleRestart(500 * errorCount);
+                            scheduleRestart(800 * errorCount);
                         }
                         break;
                 }
@@ -150,10 +147,12 @@ public class SpeechManager {
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        // Desactivar censura
+        // Sin censura
         intent.putExtra("android.speech.extra.PREFER_OFFLINE", false);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
+        // Tiempos extendidos para no cortar multimedia
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L);
 
         try {
             recognizer.startListening(intent);
