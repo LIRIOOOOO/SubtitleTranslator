@@ -1,10 +1,10 @@
+
 package com.subtitletranslator;
 
 import android.content.Context;
 import android.content.Intent;
 import android.os.*;
 import android.speech.*;
-import android.util.Log;
 import com.google.mlkit.nl.translate.*;
 import com.google.mlkit.common.model.DownloadConditions;
 import java.util.*;
@@ -29,6 +29,10 @@ public class SpeechManager {
     private int errorCount = 0;
     private static final int MAX_ERRORS = 5;
 
+    // Para evitar duplicados
+    private String lastPartial = "";
+    private String lastResult = "";
+
     public SpeechManager(Context context, String sourceLang, SpeechCallback callback) {
         this.context = context;
         this.sourceLang = sourceLang;
@@ -51,7 +55,6 @@ public class SpeechManager {
                 .build();
 
         translator = Translation.getClient(options);
-
         DownloadConditions noRestriction = new DownloadConditions.Builder().build();
 
         translator.downloadModelIfNeeded(noRestriction)
@@ -62,7 +65,7 @@ public class SpeechManager {
                 })
                 .addOnFailureListener(e -> {
                     translatorReady = false;
-                    callback.onStatusChange("⚠️ Sin modelo ML Kit, usando traducción básica");
+                    callback.onStatusChange("⚠️ Sin modelo, usando texto original");
                     listen();
                 });
     }
@@ -77,17 +80,22 @@ public class SpeechManager {
             @Override
             public void onReadyForSpeech(Bundle params) {
                 errorCount = 0;
+                lastPartial = "";
             }
 
-            @Override
-            public void onBeginningOfSpeech() {}
+            @Override public void onBeginningOfSpeech() {}
 
             @Override
             public void onPartialResults(Bundle partial) {
                 ArrayList<String> list = partial.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION);
-                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
-                    translateAndPost(list.get(0), true);
+                if (list != null && !list.isEmpty()) {
+                    String text = list.get(0).trim();
+                    // Evitar duplicados con el último parcial
+                    if (!text.isEmpty() && !text.equals(lastPartial)) {
+                        lastPartial = text;
+                        translateAndPost(text, true);
+                    }
                 }
             }
 
@@ -95,8 +103,14 @@ public class SpeechManager {
             public void onResults(Bundle results) {
                 ArrayList<String> list = results.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION);
-                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
-                    translateAndPost(list.get(0), false);
+                if (list != null && !list.isEmpty()) {
+                    String text = list.get(0).trim();
+                    // Evitar duplicar el último resultado
+                    if (!text.isEmpty() && !text.equals(lastResult)) {
+                        lastResult = text;
+                        lastPartial = "";
+                        translateAndPost(text, false);
+                    }
                 }
                 scheduleRestart(300);
             }
@@ -136,6 +150,8 @@ public class SpeechManager {
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        // Desactivar censura
+        intent.putExtra("android.speech.extra.PREFER_OFFLINE", false);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
 
@@ -150,11 +166,8 @@ public class SpeechManager {
         if (translatorReady && translator != null) {
             translator.translate(text)
                     .addOnSuccessListener(translated -> {
-                        if (isPartial) {
-                            callback.onPartialResult(translated);
-                        } else {
-                            callback.onResult(translated);
-                        }
+                        if (isPartial) callback.onPartialResult(translated);
+                        else callback.onResult(translated);
                     })
                     .addOnFailureListener(e -> postFallback(text, isPartial));
         } else {
@@ -163,11 +176,8 @@ public class SpeechManager {
     }
 
     private void postFallback(String text, boolean isPartial) {
-        if (isPartial) {
-            callback.onPartialResult(text);
-        } else {
-            callback.onResult(text);
-        }
+        if (isPartial) callback.onPartialResult(text);
+        else callback.onResult(text);
     }
 
     private void scheduleRestart(int delayMs) {
