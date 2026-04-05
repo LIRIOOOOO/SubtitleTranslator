@@ -1,7 +1,9 @@
 package com.subtitletranslator;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.*;
 import android.speech.*;
 import com.google.mlkit.nl.translate.*;
@@ -21,15 +23,20 @@ public class SpeechManager {
     private final SpeechCallback callback;
     private final Handler handler;
 
-    private SpeechRecognizer recognizer;
+    private SpeechRecognizer recognizerA;
+    private boolean aListening = false;
+
     private Translator translator;
     private boolean active = false;
     private boolean translatorReady = false;
     private int errorCount = 0;
-    private static final int MAX_ERRORS = 5;
 
-    private String lastPartial = "";
+    private String lastPartialA = "";
+    private String lastPartialB = "";
     private String lastResult = "";
+
+    // Receiver para escuchar resultados del proceso B
+    private BroadcastReceiver receiverB;
 
     public SpeechManager(Context context, String sourceLang, SpeechCallback callback) {
         this.context = context;
@@ -45,10 +52,8 @@ public class SpeechManager {
     }
 
     private void initTranslator() {
-        String mlkitLang = toMlKitLang(sourceLang);
-
         TranslatorOptions options = new TranslatorOptions.Builder()
-                .setSourceLanguage(mlkitLang)
+                .setSourceLanguage(toMlKitLang(sourceLang))
                 .setTargetLanguage(TranslateLanguage.SPANISH)
                 .build();
 
@@ -59,26 +64,79 @@ public class SpeechManager {
                 .addOnSuccessListener(unused -> {
                     translatorReady = true;
                     callback.onStatusChange("🎙️ Escuchando...");
-                    listen();
+                    registerReceiverB();
+                    startRecognizerB();
+                    listenA();
                 })
                 .addOnFailureListener(e -> {
                     translatorReady = false;
                     callback.onStatusChange("⚠️ Sin modelo, usando texto original");
-                    listen();
+                    registerReceiverB();
+                    startRecognizerB();
+                    listenA();
                 });
     }
 
-    private void listen() {
+    private void registerReceiverB() {
+        receiverB = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                if (!active) return;
+                String text = intent.getStringExtra(RecognizerServiceB.EXTRA_TEXT);
+                if (text == null || text.isEmpty()) return;
+
+                String action = intent.getAction();
+                if (RecognizerServiceB.BROADCAST_PARTIAL.equals(action)) {
+                    if (!text.equals(lastPartialB)) {
+                        lastPartialB = text;
+                        // Solo mostrar parcial de B si A no está produciendo resultados
+                        if (!aListening || lastPartialA.isEmpty()) {
+                            translateAndPost(text, true);
+                        }
+                    }
+                } else if (RecognizerServiceB.BROADCAST_RESULT.equals(action)) {
+                    if (!text.equals(lastResult)) {
+                        lastResult = text;
+                        lastPartialB = "";
+                        translateAndPost(text, false);
+                    }
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(RecognizerServiceB.BROADCAST_PARTIAL);
+        filter.addAction(RecognizerServiceB.BROADCAST_RESULT);
+        context.registerReceiver(receiverB, filter, Context.RECEIVER_NOT_EXPORTED);
+    }
+
+    private void startRecognizerB() {
+        if (!active) return;
+        String lang = "auto".equals(sourceLang) ? "en-US" : sourceLang;
+        Intent i = new Intent(context, RecognizerServiceB.class);
+        i.setAction(RecognizerServiceB.ACTION_START);
+        i.putExtra(RecognizerServiceB.EXTRA_LANG, lang);
+        context.startService(i);
+    }
+
+    private void stopRecognizerB() {
+        Intent i = new Intent(context, RecognizerServiceB.class);
+        i.setAction(RecognizerServiceB.ACTION_STOP);
+        context.startService(i);
+    }
+
+    private void listenA() {
         if (!active) return;
 
-        destroyRecognizer();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(context);
-        recognizer.setRecognitionListener(new RecognitionListener() {
+        destroyRecognizerA();
+        recognizerA = SpeechRecognizer.createSpeechRecognizer(context);
+        recognizerA.setRecognitionListener(new RecognitionListener() {
 
             @Override
             public void onReadyForSpeech(Bundle params) {
                 errorCount = 0;
-                lastPartial = "";
+                lastPartialA = "";
+                aListening = true;
             }
 
             @Override public void onBeginningOfSpeech() {}
@@ -89,8 +147,8 @@ public class SpeechManager {
                         SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list != null && !list.isEmpty()) {
                     String text = list.get(0).trim();
-                    if (!text.isEmpty() && !text.equals(lastPartial)) {
-                        lastPartial = text;
+                    if (!text.isEmpty() && !text.equals(lastPartialA)) {
+                        lastPartialA = text;
                         translateAndPost(text, true);
                     }
                 }
@@ -98,40 +156,40 @@ public class SpeechManager {
 
             @Override
             public void onResults(Bundle results) {
+                aListening = false;
+                lastPartialA = "";
                 ArrayList<String> list = results.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list != null && !list.isEmpty()) {
                     String text = list.get(0).trim();
                     if (!text.isEmpty() && !text.equals(lastResult)) {
                         lastResult = text;
-                        lastPartial = "";
                         translateAndPost(text, false);
                     }
                 }
-                // Reinicio con delay largo para no interrumpir multimedia
-                scheduleRestart(800);
+                // Reiniciar A con delay mínimo — B cubre el gap
+                if (active) handler.postDelayed(() -> listenA(), 150);
             }
 
             @Override
             public void onError(int error) {
+                aListening = false;
+                int delay;
                 switch (error) {
                     case SpeechRecognizer.ERROR_NO_MATCH:
                     case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                        scheduleRestart(500);
+                        delay = 150;
                         break;
                     case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                        scheduleRestart(1500);
+                        delay = 600;
                         break;
                     default:
                         errorCount++;
-                        if (errorCount >= MAX_ERRORS) {
-                            errorCount = 0;
-                            scheduleRestart(4000);
-                        } else {
-                            scheduleRestart(800 * errorCount);
-                        }
+                        delay = errorCount >= 5 ? 3000 : 300 * errorCount;
+                        if (errorCount >= 5) errorCount = 0;
                         break;
                 }
+                if (active) handler.postDelayed(() -> listenA(), delay);
             }
 
             @Override public void onRmsChanged(float rmsdB) {}
@@ -147,17 +205,16 @@ public class SpeechManager {
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        // Sin censura
         intent.putExtra("android.speech.extra.PREFER_OFFLINE", false);
-        // Tiempos extendidos para no cortar multimedia
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L);
 
         try {
-            recognizer.startListening(intent);
+            recognizerA.startListening(intent);
         } catch (Exception e) {
-            scheduleRestart(1000);
+            aListening = false;
+            if (active) handler.postDelayed(() -> listenA(), 500);
         }
     }
 
@@ -179,19 +236,13 @@ public class SpeechManager {
         else callback.onResult(text);
     }
 
-    private void scheduleRestart(int delayMs) {
-        if (!active) return;
-        handler.removeCallbacksAndMessages(null);
-        handler.postDelayed(this::listen, delayMs);
-    }
-
-    private void destroyRecognizer() {
-        if (recognizer != null) {
+    private void destroyRecognizerA() {
+        if (recognizerA != null) {
             try {
-                recognizer.stopListening();
-                recognizer.destroy();
+                recognizerA.stopListening();
+                recognizerA.destroy();
             } catch (Exception e) {}
-            recognizer = null;
+            recognizerA = null;
         }
     }
 
@@ -218,7 +269,12 @@ public class SpeechManager {
     public void stop() {
         active = false;
         handler.removeCallbacksAndMessages(null);
-        destroyRecognizer();
+        destroyRecognizerA();
+        stopRecognizerB();
+        if (receiverB != null) {
+            try { context.unregisterReceiver(receiverB); } catch (Exception e) {}
+            receiverB = null;
+        }
         if (translator != null) {
             translator.close();
             translator = null;
