@@ -34,6 +34,7 @@ public class OverlayService extends Service {
     private SpeechManager speechManager;
     private OfflineTranslator translator;
     private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
 
     private String sourceLang = "auto";
     private int fontSize = 18;
@@ -43,6 +44,10 @@ public class OverlayService extends Service {
     private Handler mainHandler;
     private StringBuilder historyText = new StringBuilder();
     private int historyCount = 0;
+
+    // Colores
+    private static final int COLOR_PARTIAL = 0xFFFFDD44; // amarillo
+    private static final int COLOR_FINAL = 0xFFFFFFFF;   // blanco
 
     @Override
     public void onCreate() {
@@ -66,10 +71,12 @@ public class OverlayService extends Service {
                 fontSize = intent.getIntExtra("fontSize", 18);
                 startForegroundWithNotification();
                 showOverlay();
+                requestAudioFocusDuck();
                 startSpeech();
                 break;
             case ACTION_STOP:
                 stopSpeech();
+                abandonAudioFocus();
                 removeOverlay();
                 stopForeground(true);
                 stopSelf();
@@ -82,22 +89,60 @@ public class OverlayService extends Service {
         return START_STICKY;
     }
 
+    private void requestAudioFocusDuck() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            audioFocusRequest = new AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(attrs)
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener(change -> {})
+                    .build();
+            audioManager.requestAudioFocus(audioFocusRequest);
+        } else {
+            audioManager.requestAudioFocus(
+                    change -> {},
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+        }
+    }
+
+    private void abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            }
+        } else {
+            audioManager.abandonAudioFocus(change -> {});
+        }
+    }
+
     private void startSpeech() {
         speechManager = new SpeechManager(this, sourceLang,
                 new SpeechManager.SpeechCallback() {
 
                     @Override
                     public void onPartialResult(String text) {
+                        // Amarillo — traduciendo
                         mainHandler.post(() -> {
-                            if (tvSubtitle != null) tvSubtitle.setText(text);
-                            if (tvOriginal != null) tvOriginal.setVisibility(View.VISIBLE);
+                            if (tvSubtitle != null) {
+                                tvSubtitle.setText(text);
+                                tvSubtitle.setTextColor(COLOR_PARTIAL);
+                            }
                         });
                     }
 
                     @Override
                     public void onResult(String text) {
+                        // Blanco — traducción confirmada
                         mainHandler.post(() -> {
-                            if (tvSubtitle != null) tvSubtitle.setText(text);
+                            if (tvSubtitle != null) {
+                                tvSubtitle.setText(text);
+                                tvSubtitle.setTextColor(COLOR_FINAL);
+                            }
                             addToHistory(text);
                         });
                     }
@@ -111,6 +156,7 @@ public class OverlayService extends Service {
                                         || current.startsWith("⚠") || current.startsWith("⏳")
                                         || current.startsWith("🔄") || current.startsWith("⏸")) {
                                     tvSubtitle.setText(status);
+                                    tvSubtitle.setTextColor(COLOR_FINAL);
                                 }
                             }
                         });
@@ -123,7 +169,6 @@ public class OverlayService extends Service {
         if (text == null || text.trim().isEmpty()) return;
         historyCount++;
         if (historyCount > MAX_HISTORY) {
-            // Borrar primera línea
             int idx = historyText.indexOf("\n");
             if (idx >= 0) historyText.delete(0, idx + 1);
             historyCount = MAX_HISTORY;
@@ -133,7 +178,6 @@ public class OverlayService extends Service {
 
         if (tvHistory != null) {
             tvHistory.setText(historyText.toString());
-            // Auto-scroll al final
             if (scrollHistory != null) {
                 scrollHistory.post(() -> scrollHistory.fullScroll(View.FOCUS_DOWN));
             }
@@ -163,6 +207,7 @@ public class OverlayService extends Service {
 
         btnClose.setOnClickListener(v -> {
             stopSpeech();
+            abandonAudioFocus();
             removeOverlay();
             stopForeground(true);
             stopSelf();
@@ -172,11 +217,13 @@ public class OverlayService extends Service {
             isPaused = !isPaused;
             if (isPaused) {
                 tvSubtitle.setText("⏸ Pausado");
+                tvSubtitle.setTextColor(COLOR_FINAL);
                 tvOriginal.setVisibility(View.GONE);
                 btnMinimize.setImageResource(android.R.drawable.ic_media_play);
                 stopSpeech();
             } else {
                 tvSubtitle.setText("🎙️ Escuchando...");
+                tvSubtitle.setTextColor(COLOR_FINAL);
                 btnMinimize.setImageResource(android.R.drawable.ic_media_pause);
                 startSpeech();
             }
@@ -245,6 +292,7 @@ public class OverlayService extends Service {
     public void onDestroy() {
         super.onDestroy();
         stopSpeech();
+        abandonAudioFocus();
         removeOverlay();
         if (translator != null) translator.destroy();
     }
