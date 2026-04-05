@@ -29,6 +29,13 @@
         <service
             android:name=".OverlayService"
             android:exported="false"
+            android:process=":main"
+            android:foregroundServiceType="microphone" />
+
+        <service
+            android:name=".RecognizerServiceB"
+            android:exported="false"
+            android:process=":recognizer"
             android:foregroundServiceType="microphone" />
 
     </application>
