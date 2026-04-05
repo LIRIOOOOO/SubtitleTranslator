@@ -18,11 +18,13 @@ public class OverlayService extends Service {
     public static final String ACTION_UPDATE_FONT = "ACTION_UPDATE_FONT";
 
     private static final String CHANNEL_ID = "subtitle_channel";
+    private static final long HISTORY_DURATION_MS = 5000;
 
     private WindowManager windowManager;
     private View overlayView;
     private TextView tvSubtitle;
     private TextView tvOriginal;
+    private TextView tvHistory;
     private ImageButton btnClose;
     private ImageButton btnMinimize;
 
@@ -36,6 +38,10 @@ public class OverlayService extends Service {
     private boolean isPaused = false;
 
     private Handler mainHandler;
+    private Runnable clearHistoryRunnable;
+
+    // Último texto traducido confirmado
+    private String lastConfirmedTranslation = "";
 
     @Override
     public void onCreate() {
@@ -86,6 +92,7 @@ public class OverlayService extends Service {
             audioFocusRequest = new AudioFocusRequest.Builder(
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                     .setAudioAttributes(attrs)
+                    .setWillPauseWhenDucked(false)
                     .setOnAudioFocusChangeListener(change -> {})
                     .build();
             audioManager.requestAudioFocus(audioFocusRequest);
@@ -113,30 +120,40 @@ public class OverlayService extends Service {
 
                     @Override
                     public void onPartialResult(String text) {
-                        new Thread(() -> {
-                            String translated = translator.translate(text, sourceLang);
-                            mainHandler.post(() -> {
-                                if (tvSubtitle != null) tvSubtitle.setText(translated);
-                                if (tvOriginal != null) {
-                                    tvOriginal.setText("🔊 " + text);
-                                    tvOriginal.setVisibility(View.VISIBLE);
-                                }
-                            });
-                        }).start();
+                        // Mostrar traducción parcial en zona principal
+                        mainHandler.post(() -> {
+                            if (tvSubtitle != null) tvSubtitle.setText(text);
+                            if (tvOriginal != null) {
+                                tvOriginal.setVisibility(View.VISIBLE);
+                            }
+                        });
                     }
 
                     @Override
                     public void onResult(String text) {
-                        new Thread(() -> {
-                            String translated = translator.translate(text, sourceLang);
-                            mainHandler.post(() -> {
-                                if (tvSubtitle != null) tvSubtitle.setText(translated);
-                                if (tvOriginal != null) {
-                                    tvOriginal.setText("🔊 " + text);
-                                    tvOriginal.setVisibility(View.VISIBLE);
+                        mainHandler.post(() -> {
+                            // Mover traducción actual al historial
+                            if (!lastConfirmedTranslation.isEmpty() && tvHistory != null) {
+                                tvHistory.setText(lastConfirmedTranslation);
+                                tvHistory.setVisibility(View.VISIBLE);
+
+                                // Limpiar historial después de 5 segundos
+                                if (clearHistoryRunnable != null) {
+                                    mainHandler.removeCallbacks(clearHistoryRunnable);
                                 }
-                            });
-                        }).start();
+                                clearHistoryRunnable = () -> {
+                                    if (tvHistory != null) {
+                                        tvHistory.setVisibility(View.GONE);
+                                        tvHistory.setText("");
+                                    }
+                                };
+                                mainHandler.postDelayed(clearHistoryRunnable, HISTORY_DURATION_MS);
+                            }
+
+                            // Mostrar nuevo resultado en zona principal
+                            lastConfirmedTranslation = text;
+                            if (tvSubtitle != null) tvSubtitle.setText(text);
+                        });
                     }
 
                     @Override
@@ -144,7 +161,9 @@ public class OverlayService extends Service {
                         mainHandler.post(() -> {
                             if (tvSubtitle != null && !isPaused) {
                                 String current = tvSubtitle.getText().toString();
-                                if (current.isEmpty() || current.startsWith("🎙") || current.startsWith("⚠") || current.startsWith("🔄")) {
+                                if (current.isEmpty() || current.startsWith("🎙")
+                                        || current.startsWith("⚠") || current.startsWith("⏳")
+                                        || current.startsWith("🔄")) {
                                     tvSubtitle.setText(status);
                                 }
                             }
@@ -166,6 +185,7 @@ public class OverlayService extends Service {
         overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_subtitle, null);
         tvSubtitle = overlayView.findViewById(R.id.tvSubtitle);
         tvOriginal = overlayView.findViewById(R.id.tvOriginal);
+        tvHistory = overlayView.findViewById(R.id.tvHistory);
         btnClose = overlayView.findViewById(R.id.btnClose);
         btnMinimize = overlayView.findViewById(R.id.btnMinimize);
 
@@ -184,6 +204,7 @@ public class OverlayService extends Service {
             if (isPaused) {
                 tvSubtitle.setText("⏸ Pausado");
                 tvOriginal.setVisibility(View.GONE);
+                tvHistory.setVisibility(View.GONE);
                 btnMinimize.setImageResource(android.R.drawable.ic_media_play);
                 stopSpeech();
             } else {
@@ -212,6 +233,9 @@ public class OverlayService extends Service {
         if (overlayView != null && windowManager != null) {
             try { windowManager.removeView(overlayView); } catch (Exception e) {}
             overlayView = null;
+        }
+        if (clearHistoryRunnable != null) {
+            mainHandler.removeCallbacks(clearHistoryRunnable);
         }
     }
 
