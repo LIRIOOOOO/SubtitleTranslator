@@ -1,4 +1,3 @@
-
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
     android:layout_width="match_parent"
@@ -7,7 +6,6 @@
     android:background="#CC000000"
     android:padding="8dp">
 
-    <!-- Barra superior: título + controles -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -42,7 +40,6 @@
 
     </LinearLayout>
 
-    <!-- Transcripción original (pequeña) -->
     <TextView
         android:id="@+id/tvOriginal"
         android:layout_width="match_parent"
@@ -56,14 +53,12 @@
         android:maxLines="1"
         android:ellipsize="end"/>
 
-    <!-- Separador -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="#33FFFFFF"
-        android:marginBottom="4dp"/>
+        android:layout_marginBottom="4dp"/>
 
-    <!-- Historial: traducción anterior (5 segundos) -->
     <TextView
         android:id="@+id/tvHistory"
         android:layout_width="match_parent"
@@ -78,7 +73,6 @@
         android:ellipsize="end"
         android:fontFamily="sans-serif"/>
 
-    <!-- Traducción actual (principal, grande) -->
     <TextView
         android:id="@+id/tvSubtitle"
         android:layout_width="match_parent"
