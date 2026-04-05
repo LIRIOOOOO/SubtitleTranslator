@@ -26,7 +26,7 @@ public class SpeechManager {
     private static final int CHANNEL = AudioFormat.CHANNEL_IN_MONO;
     private static final int ENCODING = AudioFormat.ENCODING_PCM_16BIT;
     private static final int SEGMENT_SECONDS = 3;
-    private static final int BUFFER_SIZE = SAMPLE_RATE * SEGMENT_SECONDS * 2; // 16bit = 2 bytes
+    private static final int BUFFER_SIZE = SAMPLE_RATE * SEGMENT_SECONDS * 2;
 
     private final Context context;
     private final String sourceLang;
@@ -81,7 +81,7 @@ public class SpeechManager {
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING);
 
         audioRecord = new AudioRecord(
-                MediaRecorder.AudioSource.MIC, // MIC no pide foco de audio
+                MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
                 CHANNEL,
                 ENCODING,
@@ -98,14 +98,12 @@ public class SpeechManager {
             byte[] segment = new byte[BUFFER_SIZE];
             while (active) {
                 int totalRead = 0;
-                // Leer exactamente SEGMENT_SECONDS de audio
                 while (totalRead < BUFFER_SIZE && active) {
                     int read = audioRecord.read(segment, totalRead, BUFFER_SIZE - totalRead);
                     if (read > 0) totalRead += read;
                 }
                 if (active && totalRead > 0) {
                     final byte[] audioData = Arrays.copyOf(segment, totalRead);
-                    // Enviar a Google Speech en hilo separado para no bloquear captura
                     new Thread(() -> recognizeAndTranslate(audioData)).start();
                 }
             }
@@ -115,22 +113,16 @@ public class SpeechManager {
 
     private void recognizeAndTranslate(byte[] audioData) {
         try {
-            // Construir WAV en memoria
-            byte[] wav = buildWav(audioData);
-
-            // Llamar a Google Speech REST API
             String lang = "auto".equals(sourceLang) ? "en-US" : sourceLang;
-            String recognized = callGoogleSpeech(wav, lang);
+            String recognized = callGoogleSpeech(audioData, lang);
 
             if (recognized == null || recognized.isEmpty()) return;
             if (recognized.equals(lastSent)) return;
             lastSent = recognized;
 
-            // Mostrar parcial mientras traduce
             final String rec = recognized;
             mainHandler.post(() -> callback.onPartialResult(rec));
 
-            // Traducir
             if (translatorReady && translator != null) {
                 translator.translate(recognized)
                         .addOnSuccessListener(translated -> callback.onResult(translated))
@@ -140,63 +132,74 @@ public class SpeechManager {
             }
 
         } catch (Exception e) {
-            // Continuar silenciosamente
+            android.util.Log.e("SpeechManager", "Error: " + e.getMessage());
         }
     }
 
-    private String callGoogleSpeech(byte[] wav, String langCode) {
+    private String callGoogleSpeech(byte[] pcm, String langCode) {
         try {
-            // Endpoint público de Google Speech (sin API key, igual que el teclado de Google)
-            String url = "https://www.google.com/speech-api/v2/recognize" +
-                    "?output=json&lang=" + langCode +
-                    "&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw";
+            // Codificar audio en base64
+            String audioBase64 = android.util.Base64.encodeToString(
+                    buildWav(pcm), android.util.Base64.NO_WRAP);
+
+            // Construir JSON request
+            JSONObject config = new JSONObject();
+            config.put("encoding", "LINEAR16");
+            config.put("sampleRateHertz", SAMPLE_RATE);
+            config.put("languageCode", langCode);
+            config.put("enableAutomaticPunctuation", false);
+            config.put("profanityFilter", false);
+
+            JSONObject audio = new JSONObject();
+            audio.put("content", audioBase64);
+
+            JSONObject request = new JSONObject();
+            request.put("config", config);
+            request.put("audio", audio);
+
+            // Google Cloud Speech v1 REST API
+            String url = "https://speech.googleapis.com/v1/speech:recognize" +
+                    "?key=AIzaSyC6-7Q3-pC9dKMT3vgQiEoOEK6OMr6v3H8";
 
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "audio/l16; rate=16000");
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
 
-            // Enviar audio crudo PCM (sin cabecera WAV)
+            byte[] body = request.toString().getBytes("UTF-8");
+            conn.setRequestProperty("Content-Length", String.valueOf(body.length));
             OutputStream os = conn.getOutputStream();
-            os.write(wav);
+            os.write(body);
             os.flush();
             os.close();
 
             int responseCode = conn.getResponseCode();
-            if (responseCode != 200) return null;
+            if (responseCode != 200) {
+                android.util.Log.e("SpeechManager", "HTTP " + responseCode);
+                return null;
+            }
 
             BufferedReader br = new BufferedReader(
-                    new InputStreamReader(conn.getInputStream()));
+                    new InputStreamReader(conn.getInputStream(), "UTF-8"));
             StringBuilder sb = new StringBuilder();
             String line;
-            while ((line = br.readLine()) != null) {
-                sb.append(line);
-            }
+            while ((line = br.readLine()) != null) sb.append(line);
             br.close();
 
-            // Parsear respuesta
-            String response = sb.toString().trim();
-            if (response.isEmpty()) return null;
-
-            // La respuesta puede tener múltiples JSONs separados por newline
-            String[] parts = response.split("\n");
-            for (String part : parts) {
-                if (part.contains("transcript")) {
-                    JSONObject json = new JSONObject(part);
-                    JSONArray results = json.optJSONArray("result");
-                    if (results != null && results.length() > 0) {
-                        JSONObject result = results.getJSONObject(0);
-                        JSONArray alternatives = result.optJSONArray("alternative");
-                        if (alternatives != null && alternatives.length() > 0) {
-                            return alternatives.getJSONObject(0).optString("transcript", "");
-                        }
-                    }
+            JSONObject response = new JSONObject(sb.toString());
+            JSONArray results = response.optJSONArray("results");
+            if (results != null && results.length() > 0) {
+                JSONArray alternatives = results.getJSONObject(0)
+                        .optJSONArray("alternatives");
+                if (alternatives != null && alternatives.length() > 0) {
+                    return alternatives.getJSONObject(0).optString("transcript", "");
                 }
             }
+
         } catch (Exception e) {
-            // ignorar
+            android.util.Log.e("SpeechManager", "Speech error: " + e.getMessage());
         }
         return null;
     }
@@ -207,18 +210,17 @@ public class SpeechManager {
         ByteArrayOutputStream out = new ByteArrayOutputStream(totalSize);
         DataOutputStream dos = new DataOutputStream(out);
 
-        // RIFF header
         dos.writeBytes("RIFF");
         dos.writeInt(Integer.reverseBytes(totalSize - 8));
         dos.writeBytes("WAVE");
         dos.writeBytes("fmt ");
-        dos.writeInt(Integer.reverseBytes(16)); // chunk size
-        dos.writeShort(Short.reverseBytes((short) 1)); // PCM
-        dos.writeShort(Short.reverseBytes((short) 1)); // mono
+        dos.writeInt(Integer.reverseBytes(16));
+        dos.writeShort(Short.reverseBytes((short) 1));
+        dos.writeShort(Short.reverseBytes((short) 1));
         dos.writeInt(Integer.reverseBytes(SAMPLE_RATE));
-        dos.writeInt(Integer.reverseBytes(SAMPLE_RATE * 2)); // byte rate
-        dos.writeShort(Short.reverseBytes((short) 2)); // block align
-        dos.writeShort(Short.reverseBytes((short) 16)); // bits per sample
+        dos.writeInt(Integer.reverseBytes(SAMPLE_RATE * 2));
+        dos.writeShort(Short.reverseBytes((short) 2));
+        dos.writeShort(Short.reverseBytes((short) 16));
         dos.writeBytes("data");
         dos.writeInt(Integer.reverseBytes(dataSize));
         dos.write(pcm);
